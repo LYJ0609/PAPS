@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>체력 측정 기록 사이트</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 30px; background: #f9f9f9; }
+    h1 { color: #2a3a6a; }
+    form { background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px #ddd; margin-bottom: 30px; }
+    label { display: block; margin: 10px 0 5px; }
+    input, select { width: 100%; padding: 7px; margin-bottom: 10px; border: 1px solid #bbb; border-radius: 5px; }
+    button { padding: 10px 20px; background: #2a3a6a; color: #fff; border: none; border-radius: 5px; cursor: pointer;}
+    .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; }
+    @media (max-width: 900px) { .charts { grid-template-columns: 1fr; } }
+    .chart-container { background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px #eee; }
+    .record-list { background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px #eee; margin-bottom: 30px;}
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 8px 12px; border-bottom: 1px solid #eee; text-align: center;}
+    th { background: #f1f3f9; }
+  </style>
+</head>
+<body>
+  <h1>체력 측정 기록 사이트</h1>
+  <form id="recordForm">
+    <label>학년 / 반 / 번호</label>
+    <input type="text" id="classInfo" placeholder="예: 3-2-15" required>
+    <label>이름</label>
+    <input type="text" id="name" required>
+    <label>측정하는 달 선택</label>
+    <input type="month" id="month" required>
+    <label>셔틀런 기록 (회)</label>
+    <input type="number" id="shuttleRun" min="0" required>
+    <label>유연성 기록 (cm)</label>
+    <input type="number" id="flexibility" min="0" required>
+    <label>악력 기록 - 왼손 (kg)</label>
+    <input type="number" id="gripLeft" min="0" required>
+    <label>악력 기록 - 오른손 (kg)</label>
+    <input type="number" id="gripRight" min="0" required>
+    <label>멀리뛰기 기록 (cm)</label>
+    <input type="number" id="jump" min="0" required>
+    <button type="submit">기록 저장</button>
+  </form>
+
+  <div class="record-list" id="recordList"></div>
+  
+  <div class="charts">
+    <div class="chart-container"><canvas id="chartShuttleRun"></canvas></div>
+    <div class="chart-container"><canvas id="chartFlexibility"></canvas></div>
+    <div class="chart-container"><canvas id="chartGrip"></canvas></div>
+    <div class="chart-container"><canvas id="chartJump"></canvas></div>
+  </div>
+
+  <script>
+    // 로컬스토리지에서 기록 불러오기
+    function getRecords() {
+      return JSON.parse(localStorage.getItem('fitnessRecords') || '[]');
+    }
+    function saveRecords(records) {
+      localStorage.setItem('fitnessRecords', JSON.stringify(records));
+    }
+
+    // 기록 저장
+    document.getElementById('recordForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      const record = {
+        classInfo: document.getElementById('classInfo').value,
+        name: document.getElementById('name').value,
+        month: document.getElementById('month').value,
+        shuttleRun: Number(document.getElementById('shuttleRun').value),
+        flexibility: Number(document.getElementById('flexibility').value),
+        gripLeft: Number(document.getElementById('gripLeft').value),
+        gripRight: Number(document.getElementById('gripRight').value),
+        jump: Number(document.getElementById('jump').value)
+      };
+      const records = getRecords();
+      // 같은 이름+달 중복 제거
+      const idx = records.findIndex(r => r.name === record.name && r.month === record.month);
+      if (idx >= 0) records[idx] = record;
+      else records.push(record);
+      saveRecords(records);
+      renderList();
+      renderCharts();
+      this.reset();
+    });
+
+    // 기록 목록 표시
+    function renderList() {
+      const records = getRecords().sort((a, b) => a.month.localeCompare(b.month));
+      if (records.length === 0) {
+        document.getElementById('recordList').innerHTML = "<em>기록이 없습니다.</em>";
+        return;
+      }
+      let html = "<table><tr><th>학년/반/번호</th><th>이름</th><th>달</th><th>셔틀런</th><th>유연성</th><th>왼손악력</th><th>오른손악력</th><th>멀리뛰기</th></tr>";
+      records.forEach(r => {
+        html += `<tr>
+          <td>${r.classInfo}</td>
+          <td>${r.name}</td>
+          <td>${r.month}</td>
+          <td>${r.shuttleRun}</td>
+          <td>${r.flexibility}</td>
+          <td>${r.gripLeft}</td>
+          <td>${r.gripRight}</td>
+          <td>${r.jump}</td>
+        </tr>`;
+      });
+      html += "</table>";
+      document.getElementById('recordList').innerHTML = html;
+    }
+
+    // 그래프 그리기
+    let chartShuttleRun, chartFlexibility, chartGrip, chartJump;
+    function renderCharts() {
+      const records = getRecords().sort((a, b) => a.month.localeCompare(b.month));
+      // 동일 학생의 기록만 표시 (가장 최근 학생)
+      const names = [...new Set(records.map(r => r.name))];
+      const lastName = names[names.length - 1];
+      const filtered = records.filter(r => r.name === lastName);
+
+      const labels = filtered.map(r => r.month);
+      const shuttleRun = filtered.map(r => r.shuttleRun);
+      const flexibility = filtered.map(r => r.flexibility);
+      const gripLeft = filtered.map(r => r.gripLeft);
+      const gripRight = filtered.map(r => r.gripRight);
+      const jump = filtered.map(r => r.jump);
+
+      // 셔틀런
+      if (chartShuttleRun) chartShuttleRun.destroy();
+      chartShuttleRun = new Chart(document.getElementById('chartShuttleRun'), {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{ label: '셔틀런(회)', data: shuttleRun, borderColor: '#2a3a6a', fill: false }]
+        },
+        options: { responsive: true, plugins: { title: { display: true, text: "셔틀런 기록" } } }
+      });
+      // 유연성
+      if (chartFlexibility) chartFlexibility.destroy();
+      chartFlexibility = new Chart(document.getElementById('chartFlexibility'), {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{ label: '유연성(cm)', data: flexibility, borderColor: '#e67e22', fill: false }]
+        },
+        options: { responsive: true, plugins: { title: { display: true, text: "유연성 기록" } } }
+      });
+      // 악력
+      if (chartGrip) chartGrip.destroy();
+      chartGrip = new Chart(document.getElementById('chartGrip'), {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            { label: '왼손 악력(kg)', data: gripLeft, borderColor: '#16a085', fill: false },
+            { label: '오른손 악력(kg)', data: gripRight, borderColor: '#2980b9', fill: false }
+          ]
+        },
+        options: { responsive: true, plugins: { title: { display: true, text: "악력 기록" } } }
+      });
+      // 멀리뛰기
+      if (chartJump) chartJump.destroy();
+      chartJump = new Chart(document.getElementById('chartJump'), {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{ label: '멀리뛰기(cm)', data: jump, borderColor: '#8e44ad', fill: false }]
+        },
+        options: { responsive: true, plugins: { title: { display: true, text: "멀리뛰기 기록" } } }
+      });
+    }
+
+    // 최초 렌더링
+    renderList();
+    renderCharts();
+  </script>
+</body>
+</html>
